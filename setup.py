@@ -26,6 +26,7 @@ setup(
     long_description_content_type="text/markdown",
     keywords=["asuswrt", "asuswrt wrapper"],
     url=github_url,
+    download_url=f"{github_url}/archive/{VERSION}.tar.gz",
     license="MIT",
     author="ollo69",
     author_email="ollo69@users.noreply.github.com",
