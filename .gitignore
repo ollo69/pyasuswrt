@@ -160,4 +160,5 @@ cython_debug/
 .idea/.name
 
 # Tests
-test.py
+/pyp_instruction.txt
+/test_local.py
