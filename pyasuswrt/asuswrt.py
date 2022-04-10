@@ -72,6 +72,21 @@ def _nvram_cmd(info_type):
     return f"{CMD_NVRAM}({info_type})"
 
 
+def _get_json_result(result: str, json_key: str | None = None):
+    """Return the json result from a text result."""
+    try:
+        json_res = json.loads(result)
+    except json.JSONDecodeError as exc:
+        raise ValueError from exc
+
+    if not json_key:
+        return json_res
+
+    if (json_val := json_res.get(json_key)) is None:
+        raise ValueError
+    return json_val
+
+
 class AsusWrtConnectionError(Exception):
     """Error communicating with the router."""
     pass
@@ -176,7 +191,7 @@ class AsusWrtHttp:
             "cookie": f"{ASUSWRT_TOKEN_KEY}={token}",
         }
 
-    async def __post(self, command, path=ASUSWRT_GET_PATH):
+    async def __post(self, command, path=ASUSWRT_GET_PATH, *, retry=True):
         """
         Private post method to execute a hook on the router and return the result
 
@@ -199,10 +214,14 @@ class AsusWrtHttp:
             raise AsusWrtConnectionError(exc) from exc
         except ConnectionRefusedError as exc:
             self._auth_headers = None
+            if retry:
+                return await self.__post(command, path, retry=False)
             raise AsusWrtConnectionError(exc) from exc
 
         if result.find(ASUSWRT_ERROR_KEY, 0, len(ASUSWRT_ERROR_KEY)+5) >= 0:
             self._auth_headers = None
+            if retry:
+                return await self.__post(command, path, retry=False)
             raise AsusWrtConnectionError("Not connected to the router")
 
         return result
@@ -237,8 +256,8 @@ class AsusWrtHttp:
 
         :returns: JSON with memory variables
         """
-        s = json.loads(await self.__post(f"{CMD_MEMORY_USAGE}({PARAM_APPOBJ})"))
-        result = s[CMD_MEMORY_USAGE]
+        s = await self.__post(f"{CMD_MEMORY_USAGE}({PARAM_APPOBJ})")
+        result = _get_json_result(s, CMD_MEMORY_USAGE)
         return {k: int(v) for k, v in result.items()}
 
     async def async_get_cpu_usage(self):
@@ -250,8 +269,8 @@ class AsusWrtHttp:
 
         :returns: JSON with CPUs load statistics
         """
-        s = json.loads(await self.__post(f"{CMD_CPU_USAGE}({PARAM_APPOBJ})"))
-        result = s[CMD_CPU_USAGE]
+        s = await self.__post(f"{CMD_CPU_USAGE}({PARAM_APPOBJ})")
+        result = _get_json_result(s, CMD_CPU_USAGE)
         return {k: int(v) for k, v in result.items()}
 
     async def async_get_wan_info(self):
@@ -293,8 +312,8 @@ class AsusWrtHttp:
 
         :returns: JSON with a list of DHCP leases
         """
-        r = json.loads(await self.__post(f"{CMD_DHCP_LEASE}()"))
-        return r[CMD_DHCP_LEASE]
+        s = await self.__post(f"{CMD_DHCP_LEASE}()")
+        return _get_json_result(s, CMD_DHCP_LEASE)
 
     async def async_get_traffic_bytes(self):
         """
@@ -304,8 +323,8 @@ class AsusWrtHttp:
 
         :returns: JSON with sent and received bytes since last boot
         """
-        r = json.loads(await self.__post(f"{CMD_NET_TRAFFIC}({PARAM_APPOBJ})"))
-        meas = r[CMD_NET_TRAFFIC]
+        s = await self.__post(f"{CMD_NET_TRAFFIC}({PARAM_APPOBJ})")
+        meas = _get_json_result(s, CMD_NET_TRAFFIC)
         rx = int(meas["INTERNET_rx"], base=16)
         tx = int(meas["INTERNET_tx"], base=16)
         return {"rx": rx, "tx": tx}
@@ -368,7 +387,7 @@ class AsusWrtHttp:
         for s in setting_list:
             resp = await self.__post(_nvram_cmd(s))
             if resp:
-                result[s] = json.loads(resp)[s]
+                result[s] = _get_json_result(resp, s)
         return result
 
     async def async_get_clients_fullinfo(self) -> list[dict[str, any]]:
@@ -394,7 +413,8 @@ class AsusWrtHttp:
                 ]
         :returns: JSON with list of mac address and all client related info
         """
-        result = json.loads(await self.__post(f"{CMD_CLIENT_LIST}()"))
+        s = await self.__post(f"{CMD_CLIENT_LIST}()")
+        result = _get_json_result(s)
         return [result.get(CMD_CLIENT_LIST, {})]
 
     async def async_get_connected_mac(self):
