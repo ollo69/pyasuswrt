@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from aiohttp import ClientSession
@@ -53,7 +52,7 @@ NVRAM_INFO = [
     "https_lanport",
     "cfg_device_list",
     "wl0_country_code",
-    "wl1_country_code"
+    "wl1_country_code",
     "time_zone",
     "time_zone_dst",
     "time_zone_x",
@@ -89,26 +88,27 @@ def _get_json_result(result: str, json_key: str | None = None):
 
 class AsusWrtConnectionError(Exception):
     """Error communicating with the router."""
+
     pass
 
 
 class AsusWrtLoginError(Exception):
     """Login error / invalid credential."""
+
     pass
 
 
 class AsusWrtHttp:
-
     def __init__(
-            self,
-            hostname: str,
-            username: str,
-            password: str,
-            *,
-            use_https: bool = False,
-            port: int | None = None,
-            timeout: int = DEFAULT_TIMEOUT,
-            session: ClientSession | None = None
+        self,
+        hostname: str,
+        username: str,
+        password: str,
+        *,
+        use_https: bool = False,
+        port: int | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
+        session: ClientSession | None = None,
     ):
         """
         Create the router object
@@ -218,7 +218,7 @@ class AsusWrtHttp:
                 return await self.__post(command, path, retry=False)
             raise AsusWrtConnectionError(exc) from exc
 
-        if result.find(ASUSWRT_ERROR_KEY, 0, len(ASUSWRT_ERROR_KEY)+5) >= 0:
+        if result.find(ASUSWRT_ERROR_KEY, 0, len(ASUSWRT_ERROR_KEY) + 5) >= 0:
             self._auth_headers = None
             if retry:
                 return await self.__post(command, path, retry=False)
@@ -244,8 +244,8 @@ class AsusWrtHttp:
         :returns: JSON with last boot time and uptime in seconds
         """
         r = await self.__post(f"{CMD_UPTIME}()")
-        since = r.partition(':')[2].partition('(')[0]
-        up = int(r.partition('(')[2].partition(' ')[0])
+        since = r.partition(":")[2].partition("(")[0]
+        up = int(r.partition("(")[2].partition(" ")[0])
         return {"since": since, "uptime": up}
 
     async def async_get_memory_usage(self):
@@ -287,11 +287,11 @@ class AsusWrtHttp:
         """
         r = await self.__post(f"{CMD_WAN_INFO}()")
         status = {}
-        for f in r.split('\n'):
-            if 'return' in f:
+        for f in r.split("\n"):
+            if "return" in f:
                 if f"{CMD_WAN_INFO}_" in f:
-                    key = f.partition('(')[0].partition('_')[2]
-                    value = (f.rpartition(' ')[-1][:-2]).replace("'", "")
+                    key = f.partition("(")[0].partition("_")[2]
+                    value = (f.rpartition(" ")[-1][:-2]).replace("'", "")
                     status[key] = value
         return status
 
@@ -425,11 +425,7 @@ class AsusWrtHttp:
         :returns: JSON list with MAC adresses
         """
         clnts = await self.async_get_clients_fullinfo()
-        lst = [
-            mac
-            for mac, info in clnts[0].items()
-            if len(mac) == 17 and info.get("isOnline", '0') == '1'
-        ]
+        lst = [mac for mac, info in clnts[0].items() if len(mac) == 17 and info.get("isOnline", "0") == "1"]
         return lst
 
     async def async_get_connected_devices(self):
@@ -442,7 +438,7 @@ class AsusWrtHttp:
         clnts = await self.async_get_clients_fullinfo()
         result = {}
         for mac, info in clnts[0].items():
-            if len(mac) == 17 and info.get("isOnline", '0') == '1':
+            if len(mac) == 17 and info.get("isOnline", "0") == "1":
                 if not (name := info.get("nickName")):
                     name = info.get("name")
                 result[mac] = Device(mac, info.get("ip"), name)
