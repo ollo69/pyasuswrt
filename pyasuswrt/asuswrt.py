@@ -1,6 +1,8 @@
+"""PyAsusWRT Library implementation"""
+
 from __future__ import annotations
 
-from aiohttp import ClientSession
+import aiohttp
 import asyncio
 import base64
 from collections import namedtuple
@@ -8,6 +10,7 @@ from datetime import datetime
 import json
 import logging
 import math
+from typing import Any, Optional
 
 ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
 ASUSWRT_ERROR_KEY = "error_status"
@@ -86,19 +89,32 @@ def _get_json_result(result: str, json_key: str | None = None):
     return json_val
 
 
-class AsusWrtConnectionError(Exception):
+class AsusWrtError(Exception):
+    """Base class for all errors raised by this library."""
+
+    def __init__(self, *args: Any, message: Optional[str] = None, **_kwargs: Any) -> None:
+        """Initialize base UpnpError."""
+        super().__init__(*args, message)
+
+
+class AsusWrtConnectionError(AsusWrtError, aiohttp.ClientConnectionError):
+    """Error connecting with the router."""
+
+
+class AsusWrtConnectionTimeoutError(AsusWrtError, aiohttp.ServerTimeoutError, asyncio.TimeoutError):
+    """Timeout while communicating with the device."""
+
+
+class AsusWrtResponseError(AsusWrtError, aiohttp.ClientResponseError):
     """Error communicating with the router."""
 
-    pass
 
-
-class AsusWrtLoginError(Exception):
+class AsusWrtLoginError(AsusWrtError):
     """Login error / invalid credential."""
-
-    pass
 
 
 class AsusWrtHttp:
+    """Class for AsusWrt router HTTP/HTTPS connection."""
     def __init__(
         self,
         hostname: str,
@@ -108,7 +124,7 @@ class AsusWrtHttp:
         use_https: bool = False,
         port: int | None = None,
         timeout: int = DEFAULT_TIMEOUT,
-        session: ClientSession | None = None,
+        session: aiohttp.ClientSession | None = None,
     ):
         """
         Create the router object
@@ -137,7 +153,7 @@ class AsusWrtHttp:
             self._session = session
             self._managed_session = False
         else:
-            self._session = ClientSession()
+            self._session = aiohttp.ClientSession()
             self._managed_session = True
 
         self._latest_transfer_data = None
@@ -147,6 +163,77 @@ class AsusWrtHttp:
     def __url(self, path):
         """Return the url to a specific path."""
         return f"{self._protocol}://{self._hostname}:{self._port}/{path}"
+
+    async def __http_post(self, url, headers, payload, *, get_json=False):
+        """Perform aiohttp POST request."""
+        try:
+            async with self._session.post(
+                url=url,
+                headers=headers,
+                data=payload,
+                timeout=self._timeout,
+                raise_for_status=True,
+                ssl=False,
+            ) as resp:
+                if get_json:
+                    result = await resp.json()
+                else:
+                    result = await resp.text()
+
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as err:
+            raise AsusWrtConnectionTimeoutError(str(err)) from err
+        except aiohttp.ClientConnectorError as err:
+            raise AsusWrtConnectionError(str(err)) from err
+        except aiohttp.ClientConnectionError as err:
+            self._auth_headers = None
+            raise AsusWrtConnectionError(str(err)) from err
+        except aiohttp.ClientResponseError as err:
+            raise AsusWrtResponseError(
+                request_info=err.request_info,
+                history=err.history,
+                status=err.status,
+                message=err.message,
+                headers=err.headers,
+            ) from err
+        except aiohttp.ClientError as err:
+            self._auth_headers = None
+            raise AsusWrtError(str(err)) from err
+
+        return result
+
+    async def __post(self, command, path=ASUSWRT_GET_PATH, *, retry=True):
+        """
+        Private POST method to execute a hook on the router and return the result
+
+        :param command: Command to send to the return
+        :returns: string result from the router
+        """
+        payload = f"hook={command}"
+        try:
+            await self.async_connect()
+            result = await self.__http_post(self.__url(path), self._auth_headers, payload)
+
+        except (AsusWrtConnectionError, AsusWrtResponseError):
+            if retry:
+                return await self.__post(command, path, retry=False)
+            raise
+
+        if result.find(ASUSWRT_ERROR_KEY, 0, len(ASUSWRT_ERROR_KEY) + 5) >= 0:
+            self._auth_headers = None
+            if retry:
+                return await self.__post(command, path, retry=False)
+            raise AsusWrtConnectionError("Not connected to the router")
+
+        return result
+
+    async def __send_cmd(self, commands: dict[str, str], action_mode: str = "apply"):
+        """Command device to run a service or set parameter"""
+        request: dict = {
+            "action_mode": action_mode,
+            **commands,
+        }
+        result = await self.__post(str(request), ASUSWRT_CMD_PATH)
+        return result
 
     @property
     def is_connected(self) -> bool:
@@ -169,71 +256,15 @@ class AsusWrtHttp:
         payload = f"login_authorization={login_token}"
         headers = {"user-agent": ASUSWRT_USR_AGENT}
 
-        try:
-            async with self._session.post(
-                url=self.__url(ASUSWRT_LOGIN_PATH),
-                headers=headers,
-                data=payload,
-                timeout=self._timeout,
-                raise_for_status=True,
-                ssl=False,
-            ) as resp:
-                result = await resp.json()
-        except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as exc:
-            raise AsusWrtConnectionError(exc) from exc
-
+        result = await self.__http_post(self.__url(ASUSWRT_LOGIN_PATH), headers, payload, get_json=True)
         if ASUSWRT_TOKEN_KEY not in result:
-            raise AsusWrtLoginError()
+            raise AsusWrtLoginError("Login Failed")
 
         token = result[ASUSWRT_TOKEN_KEY]
         self._auth_headers = {
             "user-agent": ASUSWRT_USR_AGENT,
             "cookie": f"{ASUSWRT_TOKEN_KEY}={token}",
         }
-
-    async def __post(self, command, path=ASUSWRT_GET_PATH, *, retry=True):
-        """
-        Private post method to execute a hook on the router and return the result
-
-        :param command: Command to send to the return
-        :returns: string result from the router
-        """
-        await self.async_connect()
-        payload = f"hook={command}"
-        try:
-            async with self._session.post(
-                url=self.__url(path),
-                headers=self._auth_headers,
-                data=payload,
-                timeout=self._timeout,
-                raise_for_status=True,
-                ssl=False,
-            ) as resp:
-                result = await resp.text()
-        except (asyncio.TimeoutError, OSError) as exc:
-            raise AsusWrtConnectionError(exc) from exc
-        except ConnectionRefusedError as exc:
-            self._auth_headers = None
-            if retry:
-                return await self.__post(command, path, retry=False)
-            raise AsusWrtConnectionError(exc) from exc
-
-        if result.find(ASUSWRT_ERROR_KEY, 0, len(ASUSWRT_ERROR_KEY) + 5) >= 0:
-            self._auth_headers = None
-            if retry:
-                return await self.__post(command, path, retry=False)
-            raise AsusWrtConnectionError("Not connected to the router")
-
-        return result
-
-    async def __send_cmd(self, commands: dict[str, str], action_mode: str = "apply"):
-        """Command device to run a service or set parameter"""
-        request: dict = {
-            "action_mode": action_mode,
-            **commands,
-        }
-        result = await self.__post(str(request), ASUSWRT_CMD_PATH)
-        return result
 
     async def async_get_uptime(self):
         """

@@ -8,13 +8,14 @@ https://github.com/pypa/sampleproject
 
 # Always prefer setuptools over distutils
 from setuptools import find_packages, setup
+from pyasuswrt import __version__
 
-VERSION = "0.1.1"
+VERSION = __version__
 
 with open("README.md", "r") as f:
     readme = f.read()
 
-install_requires = []
+install_requires = ["aiohttp >= 3.7.4"]
 
 github_url = "https://github.com/ollo69/pyasuswrt"
 
@@ -31,6 +32,7 @@ setup(
     author="ollo69",
     author_email="ollo69@users.noreply.github.com",
     packages=find_packages(exclude=["contrib", "docs", "tests"]),
+    python_requires=">= 3.7",
     install_requires=install_requires,
     extras_require={},
     classifiers=[

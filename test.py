@@ -1,9 +1,12 @@
+"""Test for PyAsusWrt."""
+
 import asyncio
+from datetime import datetime
 import logging
 
 import sys
 
-from pyasuswrt.asuswrt import AsusWrtHttp
+from pyasuswrt import AsusWrtHttp, AsusWrtError
 
 NUM_LOOP = 1
 
@@ -15,6 +18,7 @@ logger = logging.getLogger(__name__)
 async def print_data():
     for i in range(NUM_LOOP):
         try:
+            logger.debug("Starting loop at: %s", datetime.now())
             logger.debug("await async_get_settings()")
             dev = await component.async_get_settings()
             logger.debug(dev)
@@ -36,8 +40,8 @@ async def print_data():
             logger.debug("await async_get_wan_info()")
             dev = await component.async_get_wan_info()
             logger.debug(dev)
-        except Exception as ex:
-            logger.exception(ex)
+        except AsusWrtError as ex:
+            logger.exception("Time: %s, Error: %s", datetime.now(),  ex)
         if i < NUM_LOOP - 1:
             await asyncio.sleep(10)
 
