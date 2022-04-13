@@ -7,6 +7,7 @@ from .asuswrt import (
     AsusWrtConnectionTimeoutError as AsusWrtConnectionTimeoutError,
     AsusWrtLoginError as AsusWrtLoginError,
     AsusWrtResponseError as AsusWrtResponseError,
+    AsusWrtValueError as AsusWrtValueError,
 )
 
 __version__ = "0.1.2"

@@ -79,13 +79,13 @@ def _get_json_result(result: str, json_key: str | None = None):
     try:
         json_res = json.loads(result)
     except json.JSONDecodeError as exc:
-        raise ValueError from exc
+        raise AsusWrtValueError(str(exc)) from exc
 
     if not json_key:
         return json_res
 
     if (json_val := json_res.get(json_key)) is None:
-        raise ValueError
+        raise AsusWrtValueError("No value available")
     return json_val
 
 
@@ -105,12 +105,16 @@ class AsusWrtConnectionTimeoutError(AsusWrtError, aiohttp.ServerTimeoutError, as
     """Timeout while communicating with the device."""
 
 
+class AsusWrtLoginError(AsusWrtError):
+    """Login error / invalid credential."""
+
+
 class AsusWrtResponseError(AsusWrtError, aiohttp.ClientResponseError):
     """Error communicating with the router."""
 
 
-class AsusWrtLoginError(AsusWrtError):
-    """Login error / invalid credential."""
+class AsusWrtValueError(AsusWrtError, ValueError):
+    """Error invalid value received."""
 
 
 class AsusWrtHttp:
