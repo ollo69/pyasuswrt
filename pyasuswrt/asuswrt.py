@@ -34,11 +34,13 @@ DEFAULT_TIMEOUT = 5
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 8443
 
+PROP_MAC_ADDR = "label_mac"
+
 NVRAM_INFO = [
     "acs_dfs",
     "model",
     "productid",
-    "label_mac",
+    PROP_MAC_ADDR,
     "firmver",
     "innerver",
     "buildinfo",
@@ -64,7 +66,7 @@ NVRAM_INFO = [
     "ntp_server0",
 ]
 
-Device = namedtuple("Device", ["mac", "ip", "name"])
+Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_mesh_node"])
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,6 +121,7 @@ class AsusWrtValueError(AsusWrtError, ValueError):
 
 class AsusWrtHttp:
     """Class for AsusWrt router HTTP/HTTPS connection."""
+
     def __init__(
         self,
         hostname: str,
@@ -160,6 +163,7 @@ class AsusWrtHttp:
             self._session = aiohttp.ClientSession()
             self._managed_session = True
 
+        self._mac = None
         self._latest_transfer_data = None
         self._latest_transfer_rate = {"rx_rate": 0.0, "tx_rate": 0.0}
         self._latest_transfer_check = None
@@ -240,6 +244,16 @@ class AsusWrtHttp:
         return result
 
     @property
+    def hostname(self) -> str:
+        """Return the device hostname."""
+        return self._hostname
+
+    @property
+    def mac(self) -> str | None:
+        """Return the device mac address."""
+        return self._mac
+
+    @property
     def is_connected(self) -> bool:
         """Return if connection is active."""
         return self._auth_headers is not None
@@ -269,6 +283,19 @@ class AsusWrtHttp:
             "user-agent": ASUSWRT_USR_AGENT,
             "cookie": f"{ASUSWRT_TOKEN_KEY}={token}",
         }
+
+        # try to get the main properties after connect
+        await self._load_props()
+
+    async def _load_props(self) -> str | None:
+        """Load device properties from NVRam."""
+        if self._mac is not None:
+            return
+        try:
+            result = await self.async_get_settings(PROP_MAC_ADDR)
+        except AsusWrtError:
+            return
+        self._mac = result.get(PROP_MAC_ADDR)
 
     async def async_get_uptime(self):
         """
@@ -360,8 +387,18 @@ class AsusWrtHttp:
         """
         s = await self.__post(f"{CMD_NET_TRAFFIC}({PARAM_APPOBJ})")
         meas = _get_json_result(s, CMD_NET_TRAFFIC)
-        rx = int(meas["INTERNET_rx"], base=16)
-        tx = int(meas["INTERNET_tx"], base=16)
+        traffic = None
+        if "INTERNET_rx" in meas:
+            traffic = "INTERNET"
+        elif "BRIDGE_rx" in meas:
+            traffic = "BRIDGE"
+
+        if traffic:
+            rx = int(meas[f"{traffic}_rx"], base=16)
+            tx = int(meas[f"{traffic}_tx"], base=16)
+        else:
+            rx = tx = 0
+
         return {"rx": rx, "tx": tx}
 
     async def async_get_traffic_rates(self):
@@ -471,25 +508,21 @@ class AsusWrtHttp:
         :return: JSON dict with mac as key and a namedtuple with mac, ip address and name as value
         """
         clnts = await self.async_get_clients_fullinfo()
-        result = {}
+        dev_list = []
+        mesh_nodes = {self._mac: self._hostname} if self._mac else {}
         for mac, info in clnts[0].items():
             if len(mac) == 17 and info.get("isOnline", "0") == "1":
+                if is_mesh_node := info.get("amesh_isRe", "0") == "1":
+                    mesh_nodes[mac] = info.get("ip")
                 if not (name := info.get("nickName")):
                     name = info.get("name")
-                result[mac] = Device(mac, info.get("ip"), name)
-                # lst.append(
-                #     {
-                #         "name": clnts['get_clientlist'][c]['name'],
-                #         "nickName": clnts['get_clientlist'][c]['nickName'],
-                #         "ip": clnts['get_clientlist'][c]['ip'],
-                #         "mac": clnts['get_clientlist'][c]['mac'],
-                #         "isOnline": clnts['get_clientlist'][c]['isOnline'],
-                #         "curTx": clnts['get_clientlist'][c]['curTx'],
-                #         "curRx": clnts['get_clientlist'][c]['curRx'],
-                #         "totalTx": clnts['get_clientlist'][c]['totalTx'],
-                #         "totalRx": clnts['get_clientlist'][c]['totalRx'],
-                #     }
-                # )
+                dev_list.append(Device(mac, info.get("ip"), name, info.get("amesh_papMac"), is_mesh_node))
+
+        result = {}
+        for dev in dev_list:
+            node_ip = mesh_nodes.get(dev.node) if dev.node else None
+            result[dev.mac] = Device(dev.mac, dev.ip, dev.name, node_ip or self._hostname, dev.is_mesh_node)
+
         return result
 
     async def async_get_client_info(self, client_mac):
