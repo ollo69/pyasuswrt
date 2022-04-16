@@ -66,7 +66,7 @@ NVRAM_INFO = [
     "ntp_server0",
 ]
 
-Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_mesh_node"])
+Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_mesh_node", "is_wl"])
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -516,12 +516,13 @@ class AsusWrtHttp:
                     mesh_nodes[mac] = info.get("ip")
                 if not (name := info.get("nickName")):
                     name = info.get("name")
-                dev_list.append(Device(mac, info.get("ip"), name, info.get("amesh_papMac"), is_mesh_node))
+                is_wl = info.get("isWL", "0") != "0"
+                dev_list.append(Device(mac, info.get("ip"), name, info.get("amesh_papMac"), is_mesh_node, is_wl))
 
         result = {}
         for dev in dev_list:
             node_ip = mesh_nodes.get(dev.node) if dev.node else None
-            result[dev.mac] = Device(dev.mac, dev.ip, dev.name, node_ip or self._hostname, dev.is_mesh_node)
+            result[dev.mac] = Device(dev.mac, dev.ip, dev.name, node_ip or self._hostname, dev.is_mesh_node, dev.is_wl)
 
         return result
 
