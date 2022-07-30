@@ -41,11 +41,14 @@ NVRAM_INFO = [
     "model",
     "productid",
     PROP_MAC_ADDR,
-    "firmver",
-    "innerver",
     "buildinfo",
+    "firmver",
+    "firmver_org",
     "buildno",
     "buildno_org",
+    "extendno",
+    "extendno_org",
+    "innerver",
     "apps_sq",
     "lan_hwaddr",
     "lan_ipaddr",
@@ -160,7 +163,7 @@ class AsusWrtHttp:
             self._session = session
             self._managed_session = False
         else:
-            self._session = aiohttp.ClientSession()
+            self._session = None
             self._managed_session = True
 
         self._mac = None
@@ -260,14 +263,18 @@ class AsusWrtHttp:
 
     async def async_disconnect(self):
         """Close the managed session on exit."""
-        if self._managed_session:
+        if self._managed_session and self._session is not None:
             await self._session.close()
+            self._session = None
         self._auth_headers = None
 
     async def async_connect(self):
         """Authenticate with the router."""
         if self.is_connected:
             return
+
+        if self._managed_session and self._session is None:
+            self._session = aiohttp.ClientSession()
 
         auth = f"{self._username}:{self._password}".encode("ascii")
         login_token = base64.b64encode(auth).decode("ascii")
