@@ -98,24 +98,49 @@ class AsusWrtError(Exception):
     """Base class for all errors raised by this library."""
 
     def __init__(self, *args: Any, message: Optional[str] = None, **_kwargs: Any) -> None:
-        """Initialize base UpnpError."""
+        """Initialize base AsusWrtError."""
         super().__init__(*args, message)
 
 
-class AsusWrtConnectionError(AsusWrtError, aiohttp.ClientConnectionError):
+class AsusWrtCommunicationError(AsusWrtError, aiohttp.ClientError):
+    """Error occurred while communicating with the AsusWrt device ."""
+
+
+class AsusWrtResponseError(AsusWrtCommunicationError):
+    """HTTP error code returned by the AsusWrt device."""
+
+    def __init__(
+        self,
+        *args: Any,
+        status: int,
+        headers: Optional[aiohttp.typedefs.LooseHeaders] = None,
+        message: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize."""
+        if not message:
+            message = f"Did not receive HTTP 200 but {status}"
+        super().__init__(*args, message=message, **kwargs)
+        self.status = status
+        self.headers = headers
+
+
+class AsusWrtClientResponseError(aiohttp.ClientResponseError, AsusWrtResponseError):
+    """HTTP response error with more details from aiohttp."""
+
+
+class AsusWrtConnectionError(AsusWrtCommunicationError, aiohttp.ClientConnectionError):
     """Error connecting with the router."""
 
 
-class AsusWrtConnectionTimeoutError(AsusWrtError, aiohttp.ServerTimeoutError, asyncio.TimeoutError):
+class AsusWrtConnectionTimeoutError(
+    AsusWrtCommunicationError, aiohttp.ServerTimeoutError, asyncio.TimeoutError
+):
     """Timeout while communicating with the device."""
 
 
 class AsusWrtLoginError(AsusWrtError):
     """Login error / invalid credential."""
-
-
-class AsusWrtResponseError(AsusWrtError, aiohttp.ClientResponseError):
-    """Error communicating with the router."""
 
 
 class AsusWrtValueError(AsusWrtError, ValueError):
@@ -199,7 +224,7 @@ class AsusWrtHttp:
             self._auth_headers = None
             raise AsusWrtConnectionError(str(err)) from err
         except aiohttp.ClientResponseError as err:
-            raise AsusWrtResponseError(
+            raise AsusWrtClientResponseError(
                 request_info=err.request_info,
                 history=err.history,
                 status=err.status,
@@ -224,7 +249,7 @@ class AsusWrtHttp:
             await self.async_connect()
             result = await self.__http_post(self.__url(path), self._auth_headers, payload)
 
-        except (AsusWrtConnectionError, AsusWrtResponseError):
+        except (AsusWrtConnectionError, AsusWrtClientResponseError):
             if retry:
                 return await self.__post(command, path, retry=False)
             raise
