@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import aiohttp
 import asyncio
 import base64
 from collections import namedtuple
@@ -11,6 +10,8 @@ import json
 import logging
 import math
 from typing import Any, Optional
+
+import aiohttp
 
 ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
 ASUSWRT_ERROR_KEY = "error_status"
@@ -97,7 +98,9 @@ def _get_json_result(result: str, json_key: str | None = None):
 class AsusWrtError(Exception):
     """Base class for all errors raised by this library."""
 
-    def __init__(self, *args: Any, message: Optional[str] = None, **_kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, message: Optional[str] = None, **_kwargs: Any
+    ) -> None:
         """Initialize base AsusWrtError."""
         super().__init__(*args, message)
 
@@ -247,7 +250,9 @@ class AsusWrtHttp:
         payload = f"hook={command}"
         try:
             await self.async_connect()
-            result = await self.__http_post(self.__url(path), self._auth_headers, payload)
+            result = await self.__http_post(
+                self.__url(path), self._auth_headers, payload
+            )
 
         except (AsusWrtConnectionError, AsusWrtClientResponseError):
             if retry:
@@ -306,7 +311,9 @@ class AsusWrtHttp:
         payload = f"login_authorization={login_token}"
         headers = {"user-agent": ASUSWRT_USR_AGENT}
 
-        result = await self.__http_post(self.__url(ASUSWRT_LOGIN_PATH), headers, payload, get_json=True)
+        result = await self.__http_post(
+            self.__url(ASUSWRT_LOGIN_PATH), headers, payload, get_json=True
+        )
         if ASUSWRT_TOKEN_KEY not in result:
             raise AsusWrtLoginError("Login Failed")
 
@@ -529,7 +536,11 @@ class AsusWrtHttp:
         :returns: JSON list with MAC adresses
         """
         clnts = await self.async_get_clients_fullinfo()
-        lst = [mac for mac, info in clnts[0].items() if len(mac) == 17 and info.get("isOnline", "0") == "1"]
+        lst = [
+            mac
+            for mac, info in clnts[0].items()
+            if len(mac) == 17 and info.get("isOnline", "0") == "1"
+        ]
         return lst
 
     async def async_get_connected_devices(self):
@@ -549,12 +560,28 @@ class AsusWrtHttp:
                 if not (name := info.get("nickName")):
                     name = info.get("name")
                 is_wl = info.get("isWL", "0") != "0"
-                dev_list.append(Device(mac, info.get("ip"), name, info.get("amesh_papMac"), is_mesh_node, is_wl))
+                dev_list.append(
+                    Device(
+                        mac,
+                        info.get("ip"),
+                        name,
+                        info.get("amesh_papMac"),
+                        is_mesh_node,
+                        is_wl,
+                    )
+                )
 
         result = {}
         for dev in dev_list:
             node_ip = mesh_nodes.get(dev.node) if dev.node else None
-            result[dev.mac] = Device(dev.mac, dev.ip, dev.name, node_ip or self._hostname, dev.is_mesh_node, dev.is_wl)
+            result[dev.mac] = Device(
+                dev.mac,
+                dev.ip,
+                dev.name,
+                node_ip or self._hostname,
+                dev.is_mesh_node,
+                dev.is_wl,
+            )
 
         return result
 

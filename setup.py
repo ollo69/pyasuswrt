@@ -9,6 +9,7 @@ https://github.com/pypa/sampleproject
 # Always prefer setuptools over distutils
 from os.path import dirname, join
 import re
+
 from setuptools import find_packages, setup
 
 LIB = "pyasuswrt"

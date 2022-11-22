@@ -1,0 +1,6 @@
+# Actions requirements
+aiohttp~=3.7.4
+pre-commit
+flake8
+isort
+black

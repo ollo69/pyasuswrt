@@ -44,7 +44,7 @@ async def print_data():
             dev = await component.async_get_wan_info()
             logger.debug(dev)
         except AsusWrtError as ex:
-            logger.exception("Time: %s, Error: %s", datetime.now(),  ex)
+            logger.exception("Time: %s, Error: %s", datetime.now(), ex)
         if i < NUM_LOOP - 1:
             await asyncio.sleep(10)
 

@@ -1,10 +1,11 @@
 """PyAsusWRT Library implementation"""
 
+# flake8: noqa
 from .asuswrt import (
-    AsusWrtHttp as AsusWrtHttp,
-    AsusWrtError as AsusWrtError,
     AsusWrtConnectionError as AsusWrtConnectionError,
     AsusWrtConnectionTimeoutError as AsusWrtConnectionTimeoutError,
+    AsusWrtError as AsusWrtError,
+    AsusWrtHttp as AsusWrtHttp,
     AsusWrtLoginError as AsusWrtLoginError,
     AsusWrtResponseError as AsusWrtResponseError,
     AsusWrtValueError as AsusWrtValueError,
