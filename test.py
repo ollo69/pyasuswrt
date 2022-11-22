@@ -3,10 +3,9 @@
 import asyncio
 from datetime import datetime
 import logging
-
 import sys
 
-from pyasuswrt import AsusWrtHttp, AsusWrtError
+from pyasuswrt import AsusWrtError, AsusWrtHttp
 
 NUM_LOOP = 1
 
