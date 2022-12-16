@@ -178,7 +178,9 @@ class AsusWrtHttp:
 
         return result
 
-    async def __post(self, *, path=_ASUSWRT_GET_PATH, command: str | None = None, retry=True):
+    async def __post(
+        self, *, path=_ASUSWRT_GET_PATH, command: str | None = None, retry=True
+    ):
         """
         Private POST method to execute a hook on the router and return the result
 
