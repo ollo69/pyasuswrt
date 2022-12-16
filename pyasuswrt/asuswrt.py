@@ -6,42 +6,46 @@ import asyncio
 import base64
 from collections import namedtuple
 from datetime import datetime
-import json
 import logging
 import math
-from typing import Any, Optional
 
 import aiohttp
 
-ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
-ASUSWRT_ERROR_KEY = "error_status"
-ASUSWRT_TOKEN_KEY = "asus_token"
-ASUSWRT_LOGIN_PATH = "login.cgi"
-ASUSWRT_GET_PATH = "appGet.cgi"
-ASUSWRT_CMD_PATH = "applyapp.cgi"
+from .exceptions import (
+    AsusWrtClientResponseError,
+    AsusWrtConnectionError,
+    AsusWrtConnectionTimeoutError,
+    AsusWrtError,
+    AsusWrtLoginError,
+)
+from .helpers import _get_json_result, _parse_temperatures
 
-PARAM_APPOBJ = "appobj"
+_ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
+_ASUSWRT_ERROR_KEY = "error_status"
+_ASUSWRT_TOKEN_KEY = "asus_token"
+_ASUSWRT_LOGIN_PATH = "login.cgi"
+_ASUSWRT_GET_PATH = "appGet.cgi"
+_ASUSWRT_CMD_PATH = "applyapp.cgi"
+_ASUSWRT_TEMP_PATH = "ajax_coretmp.asp"
 
-CMD_CLIENT_LIST = "get_clientlist"
-CMD_CPU_USAGE = "cpu_usage"
-CMD_DHCP_LEASE = "dhcpLeaseMacList"
-CMD_MEMORY_USAGE = "memory_usage"
-CMD_NET_TRAFFIC = "netdev"
-CMD_NVRAM = "nvram_get"
-CMD_UPTIME = "uptime"
-CMD_WAN_INFO = "wanlink"
+_CMD_CLIENT_LIST = "get_clientlist"
+_CMD_CPU_USAGE = "cpu_usage"
+_CMD_DHCP_LEASE = "dhcpLeaseMacList"
+_CMD_MEMORY_USAGE = "memory_usage"
+_CMD_NET_TRAFFIC = "netdev"
+_CMD_NVRAM = "nvram_get"
+_CMD_UPTIME = "uptime"
+_CMD_WAN_INFO = "wanlink"
 
-DEFAULT_TIMEOUT = 5
-DEFAULT_HTTP_PORT = 80
-DEFAULT_HTTPS_PORT = 8443
+_PARAM_APPOBJ = "appobj"
 
-PROP_MAC_ADDR = "label_mac"
+_PROP_MAC_ADDR = "label_mac"
 
-NVRAM_INFO = [
+_NVRAM_INFO = [
     "acs_dfs",
     "model",
     "productid",
-    PROP_MAC_ADDR,
+    _PROP_MAC_ADDR,
     "buildinfo",
     "firmver",
     "firmver_org",
@@ -70,6 +74,10 @@ NVRAM_INFO = [
     "ntp_server0",
 ]
 
+DEFAULT_TIMEOUT = 5
+DEFAULT_HTTP_PORT = 80
+DEFAULT_HTTPS_PORT = 8443
+
 Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_mesh_node", "is_wl"])
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,77 +85,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def _nvram_cmd(info_type):
     """Return the cmd to get nvram data."""
-    return f"{CMD_NVRAM}({info_type})"
-
-
-def _get_json_result(result: str, json_key: str | None = None):
-    """Return the json result from a text result."""
-    try:
-        json_res = json.loads(result)
-    except json.JSONDecodeError as exc:
-        raise AsusWrtValueError(str(exc)) from exc
-
-    if not json_key:
-        return json_res
-
-    if (json_val := json_res.get(json_key)) is None:
-        raise AsusWrtValueError("No value available")
-    return json_val
-
-
-class AsusWrtError(Exception):
-    """Base class for all errors raised by this library."""
-
-    def __init__(
-        self, *args: Any, message: Optional[str] = None, **_kwargs: Any
-    ) -> None:
-        """Initialize base AsusWrtError."""
-        super().__init__(*args, message)
-
-
-class AsusWrtCommunicationError(AsusWrtError, aiohttp.ClientError):
-    """Error occurred while communicating with the AsusWrt device ."""
-
-
-class AsusWrtResponseError(AsusWrtCommunicationError):
-    """HTTP error code returned by the AsusWrt device."""
-
-    def __init__(
-        self,
-        *args: Any,
-        status: int,
-        headers: Optional[aiohttp.typedefs.LooseHeaders] = None,
-        message: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize."""
-        if not message:
-            message = f"Did not receive HTTP 200 but {status}"
-        super().__init__(*args, message=message, **kwargs)
-        self.status = status
-        self.headers = headers
-
-
-class AsusWrtClientResponseError(aiohttp.ClientResponseError, AsusWrtResponseError):
-    """HTTP response error with more details from aiohttp."""
-
-
-class AsusWrtConnectionError(AsusWrtCommunicationError, aiohttp.ClientConnectionError):
-    """Error connecting with the router."""
-
-
-class AsusWrtConnectionTimeoutError(
-    AsusWrtCommunicationError, aiohttp.ServerTimeoutError, asyncio.TimeoutError
-):
-    """Timeout while communicating with the device."""
-
-
-class AsusWrtLoginError(AsusWrtError):
-    """Login error / invalid credential."""
-
-
-class AsusWrtValueError(AsusWrtError, ValueError):
-    """Error invalid value received."""
+    return f"{_CMD_NVRAM}({info_type})"
 
 
 class AsusWrtHttp:
@@ -240,14 +178,16 @@ class AsusWrtHttp:
 
         return result
 
-    async def __post(self, command, path=ASUSWRT_GET_PATH, *, retry=True):
+    async def __post(
+        self, *, path=_ASUSWRT_GET_PATH, command: str | None = None, retry=True
+    ):
         """
         Private POST method to execute a hook on the router and return the result
 
         :param command: Command to send to the return
         :returns: string result from the router
         """
-        payload = f"hook={command}"
+        payload = f"hook={command}" if command else ""
         try:
             await self.async_connect()
             result = await self.__http_post(
@@ -256,13 +196,13 @@ class AsusWrtHttp:
 
         except (AsusWrtConnectionError, AsusWrtClientResponseError):
             if retry:
-                return await self.__post(command, path, retry=False)
+                return await self.__post(path=path, command=command, retry=False)
             raise
 
-        if result.find(ASUSWRT_ERROR_KEY, 0, len(ASUSWRT_ERROR_KEY) + 5) >= 0:
+        if result.find(_ASUSWRT_ERROR_KEY, 0, len(_ASUSWRT_ERROR_KEY) + 5) >= 0:
             self._auth_headers = None
             if retry:
-                return await self.__post(command, path, retry=False)
+                return await self.__post(path=path, command=command, retry=False)
             raise AsusWrtConnectionError("Not connected to the router")
 
         return result
@@ -273,7 +213,7 @@ class AsusWrtHttp:
             "action_mode": action_mode,
             **commands,
         }
-        result = await self.__post(str(request), ASUSWRT_CMD_PATH)
+        result = await self.__post(path=_ASUSWRT_CMD_PATH, command=str(request))
         return result
 
     @property
@@ -309,18 +249,18 @@ class AsusWrtHttp:
         auth = f"{self._username}:{self._password}".encode("ascii")
         login_token = base64.b64encode(auth).decode("ascii")
         payload = f"login_authorization={login_token}"
-        headers = {"user-agent": ASUSWRT_USR_AGENT}
+        headers = {"user-agent": _ASUSWRT_USR_AGENT}
 
         result = await self.__http_post(
-            self.__url(ASUSWRT_LOGIN_PATH), headers, payload, get_json=True
+            self.__url(_ASUSWRT_LOGIN_PATH), headers, payload, get_json=True
         )
-        if ASUSWRT_TOKEN_KEY not in result:
+        if _ASUSWRT_TOKEN_KEY not in result:
             raise AsusWrtLoginError("Login Failed")
 
-        token = result[ASUSWRT_TOKEN_KEY]
+        token = result[_ASUSWRT_TOKEN_KEY]
         self._auth_headers = {
-            "user-agent": ASUSWRT_USR_AGENT,
-            "cookie": f"{ASUSWRT_TOKEN_KEY}={token}",
+            "user-agent": _ASUSWRT_USR_AGENT,
+            "cookie": f"{_ASUSWRT_TOKEN_KEY}={token}",
         }
 
         # try to get the main properties after connect
@@ -331,10 +271,10 @@ class AsusWrtHttp:
         if self._mac is not None:
             return
         try:
-            result = await self.async_get_settings(PROP_MAC_ADDR)
+            result = await self.async_get_settings(_PROP_MAC_ADDR)
         except AsusWrtError:
             return
-        self._mac = result.get(PROP_MAC_ADDR)
+        self._mac = result.get(_PROP_MAC_ADDR)
 
     async def async_get_uptime(self):
         """
@@ -344,7 +284,7 @@ class AsusWrtHttp:
 
         :returns: JSON with last boot time and uptime in seconds
         """
-        r = await self.__post(f"{CMD_UPTIME}()")
+        r = await self.__post(command=f"{_CMD_UPTIME}()")
         since = r.partition(":")[2].partition("(")[0]
         up = int(r.partition("(")[2].partition(" ")[0])
         return {"since": since, "uptime": up}
@@ -357,8 +297,8 @@ class AsusWrtHttp:
 
         :returns: JSON with memory variables
         """
-        s = await self.__post(f"{CMD_MEMORY_USAGE}({PARAM_APPOBJ})")
-        result = _get_json_result(s, CMD_MEMORY_USAGE)
+        s = await self.__post(command=f"{_CMD_MEMORY_USAGE}({_PARAM_APPOBJ})")
+        result = _get_json_result(s, _CMD_MEMORY_USAGE)
         return {k: int(v) for k, v in result.items()}
 
     async def async_get_cpu_usage(self):
@@ -370,9 +310,21 @@ class AsusWrtHttp:
 
         :returns: JSON with CPUs load statistics
         """
-        s = await self.__post(f"{CMD_CPU_USAGE}({PARAM_APPOBJ})")
-        result = _get_json_result(s, CMD_CPU_USAGE)
+        s = await self.__post(command=f"{_CMD_CPU_USAGE}({_PARAM_APPOBJ})")
+        result = _get_json_result(s, _CMD_CPU_USAGE)
         return {k: int(v) for k, v in result.items()}
+
+    async def async_get_temperatures(self):
+        """
+        Return Temperatures from the router
+
+        Format: {'2.4GHz': 42.0, '5.0GHz': 48.0, 'CPU': 64.0, ...}
+
+        :returns: JSON with Temperatures statistics
+        """
+        s = await self.__post(path=_ASUSWRT_TEMP_PATH)
+        result = _parse_temperatures(s)
+        return result
 
     async def async_get_wan_info(self):
         """
@@ -386,11 +338,11 @@ class AsusWrtHttp:
 
         :returns: JSON with status information on the WAN connection
         """
-        r = await self.__post(f"{CMD_WAN_INFO}()")
+        r = await self.__post(command=f"{_CMD_WAN_INFO}()")
         status = {}
         for f in r.split("\n"):
             if "return" in f:
-                if f"{CMD_WAN_INFO}_" in f:
+                if f"{_CMD_WAN_INFO}_" in f:
                     key = f.partition("(")[0].partition("_")[2]
                     value = (f.rpartition(" ")[-1][:-2]).replace("'", "")
                     status[key] = value
@@ -413,8 +365,8 @@ class AsusWrtHttp:
 
         :returns: JSON with a list of DHCP leases
         """
-        s = await self.__post(f"{CMD_DHCP_LEASE}()")
-        return _get_json_result(s, CMD_DHCP_LEASE)
+        s = await self.__post(command=f"{_CMD_DHCP_LEASE}()")
+        return _get_json_result(s, _CMD_DHCP_LEASE)
 
     async def async_get_traffic_bytes(self):
         """
@@ -424,8 +376,8 @@ class AsusWrtHttp:
 
         :returns: JSON with sent and received bytes since last boot
         """
-        s = await self.__post(f"{CMD_NET_TRAFFIC}({PARAM_APPOBJ})")
-        meas = _get_json_result(s, CMD_NET_TRAFFIC)
+        s = await self.__post(command=f"{_CMD_NET_TRAFFIC}({_PARAM_APPOBJ})")
+        meas = _get_json_result(s, _CMD_NET_TRAFFIC)
         traffic = None
         if "INTERNET_rx" in meas:
             traffic = "INTERNET"
@@ -493,10 +445,10 @@ class AsusWrtHttp:
         :param setting: the setting name to query (leave empty to get all main settings)
         :returns: JSON with main Router settings or specific one
         """
-        setting_list = [setting] if setting else NVRAM_INFO
+        setting_list = [setting] if setting else _NVRAM_INFO
         result = {}
         for s in setting_list:
-            resp = await self.__post(_nvram_cmd(s))
+            resp = await self.__post(command=_nvram_cmd(s))
             if resp:
                 result[s] = _get_json_result(resp, s)
         return result
@@ -524,9 +476,9 @@ class AsusWrtHttp:
                 ]
         :returns: JSON with list of mac address and all client related info
         """
-        s = await self.__post(f"{CMD_CLIENT_LIST}()")
+        s = await self.__post(command=f"{_CMD_CLIENT_LIST}()")
         result = _get_json_result(s)
-        return [result.get(CMD_CLIENT_LIST, {})]
+        return [result.get(_CMD_CLIENT_LIST, {})]
 
     async def async_get_connected_mac(self):
         """

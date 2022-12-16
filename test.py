@@ -42,6 +42,9 @@ async def print_data():
             logger.debug("await async_get_wan_info()")
             dev = await component.async_get_wan_info()
             logger.debug(dev)
+            logger.debug("await async_get_temperatures()")
+            dev = await component.async_get_temperatures()
+            logger.debug(dev)
         except AsusWrtError as ex:
             logger.exception("Time: %s, Error: %s", datetime.now(), ex)
         if i < NUM_LOOP - 1:
