@@ -64,3 +64,22 @@ def _parse_temperatures(raw: str) -> dict[str, Any]:
                 temps[sensor] = round(float(value[1]), 1)
 
     return temps
+
+
+def _calculate_cpu_usage(cur_val: dict[str, int], prev_val: dict[str, int]) -> float:
+    """Calculate cpu usage as percentage."""
+    values = {}
+    for key in ["total", "usage"]:
+        if key not in cur_val or key not in prev_val:
+            return 0.0
+        values[key] = cur_val[key] - prev_val[key]
+
+    total = values["total"]
+    usage = values["usage"]
+    if total <= 0 or usage < 0:
+        return 0.0
+
+    try:
+        return round((usage / total) * 100, 2)
+    except ValueError:
+        return 0.0

@@ -18,7 +18,7 @@ from .exceptions import (
     AsusWrtError,
     AsusWrtLoginError,
 )
-from .helpers import _get_json_result, _parse_temperatures
+from .helpers import _calculate_cpu_usage, _get_json_result, _parse_temperatures
 
 _ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
 _ASUSWRT_ERROR_KEY = "error_status"
@@ -27,6 +27,7 @@ _ASUSWRT_LOGIN_PATH = "login.cgi"
 _ASUSWRT_GET_PATH = "appGet.cgi"
 _ASUSWRT_CMD_PATH = "applyapp.cgi"
 _ASUSWRT_TEMP_PATH = "ajax_coretmp.asp"
+_ASUSWRT_SERVICE = "rc_service"
 
 _CMD_CLIENT_LIST = "get_clientlist"
 _CMD_CPU_USAGE = "cpu_usage"
@@ -36,6 +37,7 @@ _CMD_NET_TRAFFIC = "netdev"
 _CMD_NVRAM = "nvram_get"
 _CMD_UPTIME = "uptime"
 _CMD_WAN_INFO = "wanlink"
+_CMD_REBOOT = "reboot"
 
 _PARAM_APPOBJ = "appobj"
 
@@ -133,9 +135,15 @@ class AsusWrtHttp:
             self._managed_session = True
 
         self._mac = None
+
+        # Transfer rate variable
         self._latest_transfer_data = None
         self._latest_transfer_rate = {"rx_rate": 0.0, "tx_rate": 0.0}
         self._latest_transfer_check = None
+
+        # CPU usage variable
+        self._available_cpu = None
+        self._latest_cpu_data = None
 
     def __url(self, path):
         """Return the url to a specific path."""
@@ -276,6 +284,11 @@ class AsusWrtHttp:
             return
         self._mac = result.get(_PROP_MAC_ADDR)
 
+    async def async_reboot(self) -> None:
+        """Reboot the router."""
+        command = {_ASUSWRT_SERVICE: _CMD_REBOOT}
+        await self.__send_cmd(command)
+
     async def async_get_uptime(self):
         """
         Return uptime of the router
@@ -304,15 +317,50 @@ class AsusWrtHttp:
     async def async_get_cpu_usage(self):
         """
         Return CPUs usage of the router
+        Note that at least 2 calls is required to have valid data
 
-        Format: {'cpu1_total': 38106047, 'cpu1_usage': 3395512,
-                 'cpu2_total': 38106008, 'cpu2_usage': 2384694, ...}
+        Format: {'cpu1': 0.22, 'cpu2': 0.01, ... 'cpu_total': 0.21}
 
-        :returns: JSON with CPUs load statistics
+        :returns: JSON with CPUs load percentage
         """
+        if self._available_cpu is not None:
+            if not self._available_cpu:
+                return {}
+
         s = await self.__post(command=f"{_CMD_CPU_USAGE}({_PARAM_APPOBJ})")
         result = _get_json_result(s, _CMD_CPU_USAGE)
-        return {k: int(v) for k, v in result.items()}
+
+        cpu_data = {}
+        for key, val in result.items():
+            if not key.startswith("cpu"):
+                continue
+            cpu_info = key.split("_")
+            if len(cpu_info) != 2:
+                continue
+            cpu_data.setdefault(cpu_info[0], {})[cpu_info[1]] = int(val)
+
+        if self._available_cpu is None:
+            self._available_cpu = [k for k in cpu_data]
+            if not self._available_cpu:
+                return {}
+
+        # calculate the CPU usage
+        prev_cpu_data = self._latest_cpu_data or {}
+        cpu_usage = {}
+        for key in self._available_cpu:
+            if not (key in cpu_data and key in prev_cpu_data):
+                cpu_usage[key] = 0.0
+                continue
+            cpu_usage[key] = _calculate_cpu_usage(cpu_data[key], prev_cpu_data[key])
+
+        # calculate the total CPU average usage
+        cpu_avg = [v for v in cpu_usage.values()]
+        cpu_usage["cpu_total"] = round(sum(cpu_avg) / len(cpu_avg), 2)
+
+        # save last fetched data
+        self._latest_cpu_data = cpu_data.copy()
+
+        return cpu_usage
 
     async def async_get_temperatures(self):
         """
