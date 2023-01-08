@@ -135,6 +135,7 @@ class AsusWrtHttp:
             self._managed_session = True
 
         self._mac = None
+        self._mesh_nodes = None
 
         # Transfer rate variable
         self._latest_transfer_data = None
@@ -571,6 +572,7 @@ class AsusWrtHttp:
                     )
                 )
 
+        self._mesh_nodes = mesh_nodes
         result = {}
         for dev in dev_list:
             node_ip = mesh_nodes.get(dev.node) if dev.node else None
@@ -584,6 +586,18 @@ class AsusWrtHttp:
             )
 
         return result
+
+    async def async_get_mesh_nodes(self):
+        """
+        Return a list of available mesh nodes
+
+        Format: {"AC:84:C6:6C:A7:C0": "x.x.x.x"}, ...}
+        :return: JSON dict with mac as key and ip address as value
+        """
+        if self._mesh_nodes is None:
+            await self.async_get_connected_devices()
+
+        return self._mesh_nodes
 
     async def async_get_client_info(self, client_mac):
         """
