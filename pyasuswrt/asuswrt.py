@@ -338,7 +338,7 @@ class AsusWrtHttp:
             cpu_info = key.split("_")
             if len(cpu_info) != 2:
                 continue
-            cpu_data.setdefault(cpu_info[0], {})[cpu_info[1]] = int(val)
+            cpu_data.setdefault(f"{cpu_info[0]}_usage", {})[cpu_info[1]] = int(val)
 
         if self._available_cpu is None:
             self._available_cpu = [k for k in cpu_data]
@@ -356,7 +356,7 @@ class AsusWrtHttp:
 
         # calculate the total CPU average usage
         cpu_avg = [v for v in cpu_usage.values()]
-        cpu_usage["cpu_total"] = round(sum(cpu_avg) / len(cpu_avg), 2)
+        cpu_usage["cpu_total_usage"] = round(sum(cpu_avg) / len(cpu_avg), 2)
 
         # save last fetched data
         self._latest_cpu_data = cpu_data.copy()
@@ -427,17 +427,18 @@ class AsusWrtHttp:
         """
         s = await self.__post(command=f"{_CMD_NET_TRAFFIC}({_PARAM_APPOBJ})")
         meas = _get_json_result(s, _CMD_NET_TRAFFIC)
-        traffic = None
         if "INTERNET_rx" in meas:
-            traffic = "INTERNET"
-        elif "BRIDGE_rx" in meas:
-            traffic = "BRIDGE"
-
-        if traffic:
-            rx = int(meas[f"{traffic}_rx"], base=16)
-            tx = int(meas[f"{traffic}_tx"], base=16)
+            traffics = ["INTERNET"]
         else:
-            rx = tx = 0
+            traffics = ["WIRED", "WIRELESS0", "WIRELESS1"]
+        # elif "BRIDGE_rx" in meas:
+        #     traffics = ["BRIDGE"]
+
+        rx = tx = 0
+        for traffic in traffics:
+            if f"{traffic}_rx" in meas:
+                rx += int(meas[f"{traffic}_rx"], base=16)
+                tx += int(meas[f"{traffic}_tx"], base=16)
 
         return {"rx": rx, "tx": tx}
 
