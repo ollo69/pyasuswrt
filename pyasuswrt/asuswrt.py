@@ -22,12 +22,16 @@ from .helpers import _calculate_cpu_usage, _get_json_result, _parse_temperatures
 
 _ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
 _ASUSWRT_ERROR_KEY = "error_status"
+_ASUSWRT_ACTION_KEY = "action_mode"
+_ASUSWRT_HOOK_KEY = "hook"
 _ASUSWRT_TOKEN_KEY = "asus_token"
 _ASUSWRT_LOGIN_PATH = "login.cgi"
 _ASUSWRT_GET_PATH = "appGet.cgi"
 _ASUSWRT_CMD_PATH = "applyapp.cgi"
 _ASUSWRT_TEMP_PATH = "ajax_coretmp.asp"
-_ASUSWRT_SERVICE = "rc_service"
+_ASUSWRT_SVC_REQ = "rc_service"
+_ASUSWRT_SVC_REPLY = "run_service"
+_ASUSWRT_SVC_MODIFY = "modify"
 
 _CMD_CLIENT_LIST = "get_clientlist"
 _CMD_CPU_USAGE = "cpu_usage"
@@ -191,12 +195,13 @@ class AsusWrtHttp:
         self, *, path=_ASUSWRT_GET_PATH, command: str | None = None, retry=True
     ):
         """
-        Private POST method to execute a hook on the router and return the result
+        Private POST method to execute a command on the router and return the result
 
-        :param command: Command to send to the return
+        :param path: Path to send to the command
+        :param command: Command to send
         :returns: string result from the router
         """
-        payload = f"hook={command}" if command else ""
+        payload = command or ""
         try:
             await self.async_connect()
             result = await self.__http_post(
@@ -217,13 +222,36 @@ class AsusWrtHttp:
         return result
 
     async def __send_cmd(self, commands: dict[str, str], action_mode: str = "apply"):
-        """Command device to run a service or set parameter"""
+        """Command device to run a service or set parameter."""
         request: dict = {
-            "action_mode": action_mode,
+            _ASUSWRT_ACTION_KEY: action_mode,
             **commands,
         }
-        result = await self.__post(path=_ASUSWRT_CMD_PATH, command=str(request))
-        return result
+        return await self.__post(path=_ASUSWRT_CMD_PATH, command=str(request))
+
+    async def __send_req(self, command: str):
+        """Send a hook request to the device.
+
+        :param command: Command to send
+        :returns: string result from the router
+        """
+        request = f"{_ASUSWRT_HOOK_KEY}={command}"
+        return await self.__post(command=request)
+
+    async def _run_service(self, service: str) -> bool:
+        """Command device to run a service.
+
+        :param service: Service to run
+        :returns: True or False
+        """
+        commands = {_ASUSWRT_SVC_REQ: service}
+        s = await self.__send_cmd(commands)
+        result = _get_json_result(s)
+        if not all(v in result for v in [_ASUSWRT_SVC_REPLY, _ASUSWRT_SVC_MODIFY]):
+            return False
+        if result[_ASUSWRT_SVC_REPLY] != service:
+            return False
+        return True
 
     @property
     def hostname(self) -> str:
@@ -285,10 +313,9 @@ class AsusWrtHttp:
             return
         self._mac = result.get(_PROP_MAC_ADDR)
 
-    async def async_reboot(self) -> None:
+    async def async_reboot(self) -> bool:
         """Reboot the router."""
-        command = {_ASUSWRT_SERVICE: _CMD_REBOOT}
-        await self.__send_cmd(command)
+        return await self._run_service(_CMD_REBOOT)
 
     async def async_get_uptime(self):
         """
@@ -298,10 +325,10 @@ class AsusWrtHttp:
 
         :returns: JSON with last boot time and uptime in seconds
         """
-        r = await self.__post(command=f"{_CMD_UPTIME}()")
-        since = r.partition(":")[2].partition("(")[0]
+        r = await self.__send_req(f"{_CMD_UPTIME}()")
+        time = r.partition(":")[2].partition("(")[0]
         up = int(r.partition("(")[2].partition(" ")[0])
-        return {"since": since, "uptime": up}
+        return {"uptime": up, "time": time}
 
     async def async_get_memory_usage(self):
         """
@@ -311,9 +338,19 @@ class AsusWrtHttp:
 
         :returns: JSON with memory variables
         """
-        s = await self.__post(command=f"{_CMD_MEMORY_USAGE}({_PARAM_APPOBJ})")
+        s = await self.__send_req(f"{_CMD_MEMORY_USAGE}({_PARAM_APPOBJ})")
         result = _get_json_result(s, _CMD_MEMORY_USAGE)
-        return {k: int(v) for k, v in result.items()}
+        result_val = {k: int(v) for k, v in result.items()}
+
+        # calculate memory usage percentage
+        try:
+            mem_usage = round(
+                (result_val["mem_used"] / result_val["mem_total"]) * 100, 2
+            )
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            mem_usage = None
+
+        return {"mem_usage_perc": mem_usage, **result_val}
 
     async def async_get_cpu_usage(self):
         """
@@ -328,7 +365,7 @@ class AsusWrtHttp:
             if not self._available_cpu:
                 return {}
 
-        s = await self.__post(command=f"{_CMD_CPU_USAGE}({_PARAM_APPOBJ})")
+        s = await self.__send_req(f"{_CMD_CPU_USAGE}({_PARAM_APPOBJ})")
         result = _get_json_result(s, _CMD_CPU_USAGE)
 
         cpu_data = {}
@@ -387,7 +424,7 @@ class AsusWrtHttp:
 
         :returns: JSON with status information on the WAN connection
         """
-        r = await self.__post(command=f"{_CMD_WAN_INFO}()")
+        r = await self.__send_req(f"{_CMD_WAN_INFO}()")
         status = {}
         for f in r.split("\n"):
             if "return" in f:
@@ -414,7 +451,7 @@ class AsusWrtHttp:
 
         :returns: JSON with a list of DHCP leases
         """
-        s = await self.__post(command=f"{_CMD_DHCP_LEASE}()")
+        s = await self.__send_req(f"{_CMD_DHCP_LEASE}()")
         return _get_json_result(s, _CMD_DHCP_LEASE)
 
     async def async_get_traffic_bytes(self):
@@ -425,7 +462,7 @@ class AsusWrtHttp:
 
         :returns: JSON with sent and received bytes since last boot
         """
-        s = await self.__post(command=f"{_CMD_NET_TRAFFIC}({_PARAM_APPOBJ})")
+        s = await self.__send_req(f"{_CMD_NET_TRAFFIC}({_PARAM_APPOBJ})")
         meas = _get_json_result(s, _CMD_NET_TRAFFIC)
         if "INTERNET_rx" in meas:
             traffics = ["INTERNET"]
@@ -498,7 +535,7 @@ class AsusWrtHttp:
         setting_list = [setting] if setting else _NVRAM_INFO
         result = {}
         for s in setting_list:
-            resp = await self.__post(command=_nvram_cmd(s))
+            resp = await self.__send_req(_nvram_cmd(s))
             if resp:
                 result[s] = _get_json_result(resp, s)
         return result
@@ -526,7 +563,7 @@ class AsusWrtHttp:
                 ]
         :returns: JSON with list of mac address and all client related info
         """
-        s = await self.__post(command=f"{_CMD_CLIENT_LIST}()")
+        s = await self.__send_req(f"{_CMD_CLIENT_LIST}()")
         result = _get_json_result(s)
         return [result.get(_CMD_CLIENT_LIST, {})]
 
