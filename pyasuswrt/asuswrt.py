@@ -42,10 +42,12 @@ _CMD_NVRAM = "nvram_get"
 _CMD_UPTIME = "uptime"
 _CMD_WAN_INFO = "wanlink"
 _CMD_REBOOT = "reboot"
+_CMD_LED_STATUS = "start_ctrl_led"
 
 _PARAM_APPOBJ = "appobj"
 
 _PROP_MAC_ADDR = "label_mac"
+_PROP_LED_STATUS = "led_val"
 
 _NVRAM_INFO = [
     "acs_dfs",
@@ -238,13 +240,19 @@ class AsusWrtHttp:
         request = f"{_ASUSWRT_HOOK_KEY}={command}"
         return await self.__post(command=request)
 
-    async def _run_service(self, service: str) -> bool:
+    async def _run_service(
+        self, service: str, *, arguments: dict[str, str] | None = None
+    ) -> bool:
         """Command device to run a service.
 
         :param service: Service to run
+        :param arguments: Arguments for the service to run (optional)
         :returns: True or False
         """
         commands = {_ASUSWRT_SVC_REQ: service}
+        if arguments:
+            commands.update(arguments)
+
         s = await self.__send_cmd(commands)
         result = _get_json_result(s)
         if not all(v in result for v in [_ASUSWRT_SVC_REPLY, _ASUSWRT_SVC_MODIFY]):
@@ -316,6 +324,22 @@ class AsusWrtHttp:
     async def async_reboot(self) -> bool:
         """Reboot the router."""
         return await self._run_service(_CMD_REBOOT)
+
+    async def async_get_led_status(self) -> bool:
+        """Get device led status."""
+        result = await self.async_get_settings(_PROP_LED_STATUS)
+        try:
+            led = int(result.get(_PROP_LED_STATUS, 0))
+        except (TypeError, ValueError):
+            return False
+        return led != 0
+
+    async def async_set_led_status(self, status: bool) -> bool:
+        """Set device led status."""
+        arguments = {
+            _PROP_LED_STATUS: 1 if status else 0,
+        }
+        return await self._run_service(_CMD_LED_STATUS, arguments=arguments)
 
     async def async_get_uptime(self):
         """
