@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections import namedtuple
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 import math
@@ -18,7 +19,12 @@ from .exceptions import (
     AsusWrtError,
     AsusWrtLoginError,
 )
-from .helpers import _calculate_cpu_usage, _get_json_result, _parse_temperatures
+from .helpers import (
+    _calculate_cpu_usage,
+    _get_json_result,
+    _parse_fw_info,
+    _parse_temperatures,
+)
 
 _ASUSWRT_USR_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
 _ASUSWRT_ERROR_KEY = "error_status"
@@ -28,6 +34,8 @@ _ASUSWRT_TOKEN_KEY = "asus_token"
 _ASUSWRT_LOGIN_PATH = "login.cgi"
 _ASUSWRT_GET_PATH = "appGet.cgi"
 _ASUSWRT_CMD_PATH = "applyapp.cgi"
+_ASUSWRT_APPLY_PATH = "apply.cgi"
+_ASUSWRT_FW_PATH = "detect_firmware.asp"
 _ASUSWRT_TEMP_PATH = "ajax_coretmp.asp"
 _ASUSWRT_SVC_REQ = "rc_service"
 _ASUSWRT_SVC_REPLY = "run_service"
@@ -43,16 +51,18 @@ _CMD_UPTIME = "uptime"
 _CMD_WAN_INFO = "wanlink"
 _CMD_REBOOT = "reboot"
 _CMD_LED_STATUS = "start_ctrl_led"
+_CMD_FW_CHECK = "firmware_check"
 
 _PARAM_APPOBJ = "appobj"
 
 _PROP_MAC_ADDR = "label_mac"
+_PROP_MODEL = "productid"
 _PROP_LED_STATUS = "led_val"
 
 _NVRAM_INFO = [
     "acs_dfs",
     "model",
-    "productid",
+    _PROP_MODEL,
     _PROP_MAC_ADDR,
     "buildinfo",
     "firmver",
@@ -85,6 +95,7 @@ _NVRAM_INFO = [
 DEFAULT_TIMEOUT = 5
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 8443
+FW_CHECK_INTERVAL = 7200  # seconds, means 2 hour
 
 Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_mesh_node", "is_wl"])
 
@@ -94,6 +105,36 @@ _LOGGER = logging.getLogger(__name__)
 def _nvram_cmd(info_type):
     """Return the cmd to get nvram data."""
     return f"{_CMD_NVRAM}({info_type})"
+
+
+@dataclass()
+class AsusWrtFirmware:
+    """Represent an AsusWrt firmware."""
+
+    version: str | None
+    build: str
+    extend: str | None
+
+    def to_str(self) -> str | None:
+        """Convert firmware information to a readable string."""
+        retval = None
+        if self.version:
+            retval = self.version
+        if retval:
+            retval += f".{self.build}"
+        else:
+            retval = self.build
+        if self.extend:
+            retval += f"_{self.extend}"
+        return retval
+
+    def check_new(self, build: str, extend: str | None) -> str | None:
+        """Check if available fw differs from existing."""
+        if build != self.build:
+            return AsusWrtFirmware(None, build, extend).to_str()
+        if extend != self.extend:
+            return AsusWrtFirmware(None, build, extend).to_str()
+        return None
 
 
 class AsusWrtHttp:
@@ -140,7 +181,10 @@ class AsusWrtHttp:
             self._session = None
             self._managed_session = True
 
-        self._mac = None
+        self._mac: str | None = None
+        self._model: str | None = None
+        self._firmware: AsusWrtFirmware | None = None
+        self._last_fw_check = datetime.utcnow()
         self._mesh_nodes = None
 
         # Transfer rate variable
@@ -223,13 +267,20 @@ class AsusWrtHttp:
 
         return result
 
-    async def __send_cmd(self, commands: dict[str, str], action_mode: str = "apply"):
+    async def __send_cmd(
+        self,
+        *,
+        path=_ASUSWRT_CMD_PATH,
+        commands: dict[str, str] | None = None,
+        action_mode: str = "apply",
+    ):
         """Command device to run a service or set parameter."""
+        add_req = commands or {}
         request: dict = {
             _ASUSWRT_ACTION_KEY: action_mode,
-            **commands,
+            **add_req,
         }
-        return await self.__post(path=_ASUSWRT_CMD_PATH, command=str(request))
+        return await self.__post(path=path, command=str(request))
 
     async def __send_req(self, command: str):
         """Send a hook request to the device.
@@ -253,7 +304,7 @@ class AsusWrtHttp:
         if arguments:
             commands.update(arguments)
 
-        s = await self.__send_cmd(commands)
+        s = await self.__send_cmd(commands=commands)
         result = _get_json_result(s)
         if not all(v in result for v in [_ASUSWRT_SVC_REPLY, _ASUSWRT_SVC_MODIFY]):
             return False
@@ -270,6 +321,18 @@ class AsusWrtHttp:
     def mac(self) -> str | None:
         """Return the device mac address."""
         return self._mac
+
+    @property
+    def model(self) -> str | None:
+        """Return the device mac address."""
+        return self._model
+
+    @property
+    def firmware(self) -> str | None:
+        """Return the device firmware."""
+        if self._firmware:
+            return self._firmware.to_str()
+        return None
 
     @property
     def is_connected(self) -> bool:
@@ -311,15 +374,70 @@ class AsusWrtHttp:
         # try to get the main properties after connect
         await self._load_props()
 
-    async def _load_props(self) -> str | None:
+    async def _load_props(self) -> None:
         """Load device properties from NVRam."""
-        if self._mac is not None:
-            return
+        # mac address
+        if self._mac is None:
+            try:
+                result = await self.async_get_settings(_PROP_MAC_ADDR)
+            except AsusWrtError:
+                _LOGGER.debug("Failed to retrieve device mac address")
+            else:
+                self._mac = result.get(_PROP_MAC_ADDR)
+        # model
+        if self._model is None:
+            try:
+                result = await self.async_get_settings(_PROP_MODEL)
+            except AsusWrtError:
+                _LOGGER.debug("Failed to retrieve device model")
+            else:
+                self._model = result.get(_PROP_MODEL)
+        # firmware
         try:
-            result = await self.async_get_settings(_PROP_MAC_ADDR)
+            await self.async_get_cur_fw()
         except AsusWrtError:
+            _LOGGER.debug("Failed to retrieve installed firmware")
+
+    async def async_get_cur_fw(self) -> str | None:
+        """Get current device firmware information."""
+        version = build = extend = None
+        if firmver := await self.async_get_settings("firmver"):
+            version = firmver.get("firmver")
+        buildno = await self.async_get_settings("buildno")
+        if buildno and "buildno" in buildno:
+            build = buildno["buildno"]
+            if extendno := await self.async_get_settings("extendno"):
+                extend = extendno.get("extendno")
+        if build:
+            self._firmware = AsusWrtFirmware(version, build, extend)
+        return self.firmware
+
+    async def async_get_new_fw(self) -> str | None:
+        """Get new device firmware available."""
+        try:
+            await self.async_check_fw_update()
+            if not await self.async_get_cur_fw():
+                return None
+            res = await self.__post(path=_ASUSWRT_FW_PATH)
+        except AsusWrtError as ex:
+            _LOGGER.debug("Failed checking for new fw version: %s", ex)
+            return None
+
+        if not (fw_elem := _parse_fw_info(res)):
+            return None
+
+        return self._firmware.check_new(fw_elem[0], fw_elem[1])
+
+    async def async_check_fw_update(self):
+        """Check for firmware update."""
+        call_time = datetime.utcnow()
+        if (call_time - self._last_fw_check).total_seconds() < FW_CHECK_INTERVAL:
             return
-        self._mac = result.get(_PROP_MAC_ADDR)
+        self._last_fw_check = call_time
+        try:
+            await self.__send_cmd(path=_ASUSWRT_APPLY_PATH, action_mode=_CMD_FW_CHECK)
+        except AsusWrtError:
+            _LOGGER.debug("Failed to check for new firmware")
 
     async def async_reboot(self) -> bool:
         """Reboot the router."""
