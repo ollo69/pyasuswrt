@@ -85,30 +85,18 @@ def _calculate_cpu_usage(cur_val: dict[str, int], prev_val: dict[str, int]) -> f
         return 0.0
 
 
-def _parse_fw_info(fw_info: str | None) -> list[str, str | None] | None:
+def _parse_fw_info(fw_info: str | None) -> str | None:
     """Parse information related to new firmware."""
 
     if not fw_info:
         return None
     split_info = fw_info.split(";")
-    ver_elem = []
+    new_ver = None
     for prop in split_info:
         if prop.find("webs_state_info") >= 0:
             res = prop.split("=")
             if len(res) >= 2:
-                ver = res[1].strip().replace("'", "")
-                ver_elem = ver.split("_")
+                new_ver = res[1].strip().replace("'", "")
             break
 
-    if not ver_elem or len(ver_elem) > 3:
-        return None
-
-    ver_elem.reverse()
-    extend = None
-    if len(ver_elem) == 3:
-        ver_elem.pop()  # we remove version, we don't care
-    build = ver_elem.pop()
-    if ver_elem:
-        extend = ver_elem.pop()
-
-    return [build, extend]
+    return new_ver

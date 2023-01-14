@@ -128,13 +128,20 @@ class AsusWrtFirmware:
             retval += f"_{self.extend}"
         return retval
 
-    def check_new(self, build: str, extend: str | None) -> str | None:
+    def check_new(self, new_ver: str) -> str | None:
         """Check if available fw differs from existing."""
-        if build != self.build:
-            return AsusWrtFirmware(None, build, extend).to_str()
-        if extend != self.extend:
-            return AsusWrtFirmware(None, build, extend).to_str()
-        return None
+        chk_ver = None
+        if self.version:
+            chk_ver = self.version.replace(".", "")
+        chk_build = self.build.replace(".", "_")
+        if self.extend:
+            chk_build += f"_{self.extend}"
+        if new_ver == chk_build:
+            return None
+        if chk_ver:
+            if new_ver == f"{chk_ver}_{chk_build}":
+                return None
+        return new_ver
 
 
 class AsusWrtHttp:
@@ -423,10 +430,10 @@ class AsusWrtHttp:
             _LOGGER.debug("Failed checking for new fw version: %s", ex)
             return None
 
-        if not (fw_elem := _parse_fw_info(res)):
+        if not (new_ver := _parse_fw_info(res)):
             return None
 
-        return self._firmware.check_new(fw_elem[0], fw_elem[1])
+        return self._firmware.check_new(new_ver)
 
     async def async_check_fw_update(self):
         """Check for firmware update."""
