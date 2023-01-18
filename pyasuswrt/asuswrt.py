@@ -97,7 +97,7 @@ DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 8443
 FW_CHECK_INTERVAL = 7200  # seconds, means 2 hour
 
-Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_mesh_node", "is_wl"])
+Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_wl"])
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -743,8 +743,9 @@ class AsusWrtHttp:
         mesh_nodes = {self._mac: self._hostname} if self._mac else {}
         for mac, info in clnts[0].items():
             if len(mac) == 17 and info.get("isOnline", "0") == "1":
-                if is_mesh_node := info.get("amesh_isRe", "0") == "1":
+                if info.get("amesh_isRe", "0") == "1":
                     mesh_nodes[mac] = info.get("ip")
+                    continue
                 if not (name := info.get("nickName")):
                     name = info.get("name")
                 is_wl = info.get("isWL", "0") != "0"
@@ -754,7 +755,6 @@ class AsusWrtHttp:
                         info.get("ip"),
                         name,
                         info.get("amesh_papMac"),
-                        is_mesh_node,
                         is_wl,
                     )
                 )
@@ -768,7 +768,6 @@ class AsusWrtHttp:
                 dev.ip,
                 dev.name,
                 node_ip or self._hostname,
-                dev.is_mesh_node,
                 dev.is_wl,
             )
 
