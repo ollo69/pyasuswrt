@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 import math
+from typing import Any
 
 import aiohttp
 
@@ -88,14 +89,16 @@ _NVRAM_INFO = [
     "time_zone_dst",
     "time_zone_x",
     "time_zone_dstoff",
-    "time_zone",
     "ntp_server0",
 ]
+
+_CACHE_SPECIFIC_URI = "specific_uri"
 
 DEFAULT_TIMEOUT = 5
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 8443
 FW_CHECK_INTERVAL = 7200  # seconds, means 2 hour
+
 
 Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_wl"])
 
@@ -144,6 +147,34 @@ class AsusWrtFirmware:
         return new_ver
 
 
+class AsusWrtCache:
+    """Class to manage command cache."""
+
+    def __init__(self, validity: int):
+        """Initialize the class."""
+        self._cache: dict = {}
+        self._validity = validity
+
+    def set_key(self, cache_type: str, key: str, value: Any) -> None:
+        """Add a value in the cache for specific key."""
+        self._cache.setdefault(cache_type, {})[key] = {
+            "timestamp": datetime.utcnow(),
+            "value": value,
+        }
+
+    def get_key(self, cache_type: str, key: str) -> Any:
+        """Add a value in the cache for specific key."""
+        if cache_type not in self._cache:
+            return None
+        if (cache_value := self._cache[cache_type].get(key)) is None:
+            return None
+        diff = datetime.utcnow() - cache_value["timestamp"]
+        if diff.total_seconds() > self._validity:
+            self._cache[cache_type].pop(key)
+            return None
+        return cache_value["value"]
+
+
 class AsusWrtHttp:
     """Class for AsusWrt router HTTP/HTTPS connection."""
 
@@ -187,6 +218,10 @@ class AsusWrtHttp:
         else:
             self._session = None
             self._managed_session = True
+
+        # initialize 5 seconds cache to avoid
+        # multiple requests in specific interval
+        self._cache = AsusWrtCache(5)
 
         self._mac: str | None = None
         self._model: str | None = None
@@ -295,8 +330,12 @@ class AsusWrtHttp:
         :param command: Command to send
         :returns: string result from the router
         """
+        if value := self._cache.get_key(_ASUSWRT_HOOK_KEY, command):
+            return value
         request = f"{_ASUSWRT_HOOK_KEY}={command}"
-        return await self.__post(command=request)
+        result = await self.__post(command=request)
+        self._cache.set_key(_ASUSWRT_HOOK_KEY, command, result)
+        return result
 
     async def _run_service(
         self, service: str, *, arguments: dict[str, str] | None = None
@@ -557,8 +596,11 @@ class AsusWrtHttp:
 
         :returns: JSON with Temperatures statistics
         """
+        if result := self._cache.get_key(_CACHE_SPECIFIC_URI, _ASUSWRT_TEMP_PATH):
+            return result
         s = await self.__post(path=_ASUSWRT_TEMP_PATH)
         result = _parse_temperatures(s)
+        self._cache.set_key(_CACHE_SPECIFIC_URI, _ASUSWRT_TEMP_PATH, result)
         return result
 
     async def async_get_wan_info(self):
