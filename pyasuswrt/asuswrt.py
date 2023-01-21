@@ -195,7 +195,7 @@ class AsusWrtHttp:
         Parameters:
             hostname: HostName or IP Address of the router
             username: Router username
-            password: Password required to login
+            password: Password required to log in
             use_https: if True use https instead of http (default False)
             port: the tcp port to use (leave None or 0 for protocol default)
             timeout: the tcp timeout (default = 5 sec.)
@@ -391,6 +391,11 @@ class AsusWrtHttp:
             await self._session.close()
             self._session = None
         self._auth_headers = None
+
+    async def async_set_host(self, new_host: str):
+        """Change the connection hostname."""
+        await self.async_disconnect()
+        self._hostname = new_host
 
     async def async_connect(self):
         """Authenticate with the router."""
@@ -784,9 +789,11 @@ class AsusWrtHttp:
         dev_list = []
         mesh_nodes = {self._mac: self._hostname} if self._mac else {}
         for mac, info in clnts[0].items():
-            if len(mac) == 17 and info.get("isOnline", "0") == "1":
+            if len(mac) == 17:
                 if info.get("amesh_isRe", "0") == "1":
                     mesh_nodes[mac] = info.get("ip")
+                    continue
+                if info.get("isOnline", "0") != "1":
                     continue
                 if not (name := info.get("nickName")):
                     name = info.get("name")
