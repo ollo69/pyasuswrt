@@ -94,7 +94,7 @@ _NVRAM_INFO = [
 
 _CACHE_SPECIFIC_URI = "specific_uri"
 
-DEFAULT_TIMEOUT = 5
+DEFAULT_TIMEOUT = 10
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 8443
 FW_CHECK_INTERVAL = 7200  # seconds, means 2 hour
@@ -209,7 +209,8 @@ class AsusWrtHttp:
             self._port = port
         else:
             self._port = DEFAULT_HTTPS_PORT if use_https else DEFAULT_HTTP_PORT
-        self._timeout = timeout if timeout > 0 else DEFAULT_TIMEOUT
+        total_timeout = timeout if timeout > 0 else DEFAULT_TIMEOUT
+        self._timeout = aiohttp.ClientTimeout(total=total_timeout)
 
         self._auth_headers = None
         if session:
