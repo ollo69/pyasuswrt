@@ -12,4 +12,4 @@ from .exceptions import (
     AsusWrtValueError as AsusWrtValueError,
 )
 
-__version__ = "0.1.16"
+__version__ = "0.1.17"
