@@ -233,6 +233,10 @@ class AsusWrtHttp:
         self._last_fw_check = datetime.utcnow()
         self._mesh_nodes = None
 
+        # Transfer byte variable
+        self._latest_byte_data = None
+        self._byte_mode_internet = False
+
         # Transfer rate variable
         self._latest_transfer_data = None
         self._latest_transfer_rate = {"rx_rate": 0.0, "tx_rate": 0.0}
@@ -704,7 +708,10 @@ class AsusWrtHttp:
         meas = _get_json_result(s, _CMD_NET_TRAFFIC)
         if "INTERNET_rx" in meas:
             traffics = ["INTERNET"]
+            self._byte_mode_internet = True
         else:
+            if self._byte_mode_internet:
+                return self._latest_byte_data
             traffics = ["WIRED", "WIRELESS0", "WIRELESS1"]
         # elif "BRIDGE_rx" in meas:
         #     traffics = ["BRIDGE"]
@@ -715,7 +722,8 @@ class AsusWrtHttp:
                 rx += int(meas[f"{traffic}_rx"], base=16)
                 tx += int(meas[f"{traffic}_tx"], base=16)
 
-        return {"rx": rx, "tx": tx}
+        self._latest_byte_data = {"rx": rx, "tx": tx}
+        return self._latest_byte_data
 
     async def async_get_traffic_rates(self):
         """
