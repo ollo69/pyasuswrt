@@ -19,11 +19,13 @@ from .exceptions import (
     AsusWrtConnectionTimeoutError,
     AsusWrtError,
     AsusWrtLoginError,
+    AsusWrtValueError,
 )
 from .helpers import (
     _calculate_cpu_usage,
     _get_json_result,
     _parse_fw_info,
+    _parse_sysinfo,
     _parse_temperatures,
 )
 
@@ -38,6 +40,7 @@ _ASUSWRT_CMD_PATH = "applyapp.cgi"
 _ASUSWRT_APPLY_PATH = "apply.cgi"
 _ASUSWRT_FW_PATH = "detect_firmware.asp"
 _ASUSWRT_TEMP_PATH = "ajax_coretmp.asp"
+_ASUSWRT_SYSINFO_PATH = "ajax_sysinfo.asp"
 _ASUSWRT_SVC_REQ = "rc_service"
 _ASUSWRT_SVC_REPLY = "run_service"
 _ASUSWRT_SVC_MODIFY = "modify"
@@ -593,6 +596,44 @@ class AsusWrtHttp:
         self._latest_cpu_data = cpu_data.copy()
 
         return cpu_usage
+
+    async def _async_get_sysinfo(self):
+        """
+        Return SysInfo from the router
+
+        :returns: JSON with Sysinfo statistics
+        """
+        if result := self._cache.get_key(_CACHE_SPECIFIC_URI, _ASUSWRT_SYSINFO_PATH):
+            return result
+        s = await self.__post(path=_ASUSWRT_SYSINFO_PATH)
+        result = _parse_sysinfo(s)
+        self._cache.set_key(_CACHE_SPECIFIC_URI, _ASUSWRT_SYSINFO_PATH, result)
+        return result
+
+    async def async_get_loadavg(self):
+        """
+        Return Load Average info from the router
+
+        Format:  {'load_avg_1': 1.0, 'load_avg_5': 1.03, 'load_avg_15': 1.0}
+
+        :returns: JSON with LoadAvg statistics
+        """
+
+        sys_info = await self._async_get_sysinfo()
+        if "cpu_stats_arr" not in sys_info:
+            raise AsusWrtValueError("Loadavg info not available")
+        load_avg = sys_info["cpu_stats_arr"]
+        result = {}
+        for key, val in load_avg.items():
+            num_val = None
+            if val is not None:
+                try:
+                    num_val = round(float(val), 2)
+                except ValueError:
+                    num_val = None
+            result[key] = num_val
+
+        return result
 
     async def async_get_temperatures(self):
         """

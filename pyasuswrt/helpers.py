@@ -30,6 +30,28 @@ _MAP_TEMPERATURES: dict[str, list[str]] = {
     "CPU": ['curr_cpuTemp="([0-9.]+)"', 'curr_coreTmp_cpu="([0-9.]+)"'],
 }
 
+_MAP_SYSINFO: dict[str, list[str]] = {
+    "conn_stats_arr": [
+        "conn_total",
+        "conn_active",
+    ],
+    "cpu_stats_arr": [
+        "load_avg_1",
+        "load_avg_5",
+        "load_avg_15",
+    ],
+    "mem_stats_arr": [
+        "ram_total",
+        "ram_free",
+        "buffers",
+        "cache",
+        "swap_size",
+        "swap_total",
+        "nvram_used",
+        "jffs",
+    ],
+}
+
 
 def _get_json_result(result: str, json_key: str | None = None):
     """Return the json result from a text result."""
@@ -64,6 +86,40 @@ def _parse_temperatures(raw: str) -> dict[str, Any]:
                 temps[sensor] = round(float(value[1]), 1)
 
     return temps
+
+
+def _parse_sysinfo(raw: str) -> dict[str, Any]:
+    """Sysinfo parser"""
+
+    if type(raw) != str:
+        raise AsusWrtValueError("Invalid sysinfo values")
+    if raw.strip() == str():
+        return {}
+
+    raw = raw.replace("\n", "")
+    raw = raw.replace("\ufeff", "")
+    raw = raw.replace(" = ", "=")
+    raw = raw.replace("=", '": ')
+    raw = raw.replace(";", ',"')
+    raw = '{"' + raw[:-2] + "}"
+
+    to_parse = _get_json_result(raw)
+
+    sys_info = dict()
+    for cat_info in _MAP_SYSINFO:
+        if cat_info not in to_parse:
+            continue
+        cat = {}
+        values = to_parse[cat_info]
+        for idx, key in enumerate(_MAP_SYSINFO[cat_info]):
+            try:
+                value = values[idx]
+            except (IndexError, ValueError):
+                value = None
+            cat[key] = value
+        sys_info[cat_info] = cat
+
+    return sys_info
 
 
 def _calculate_cpu_usage(cur_val: dict[str, int], prev_val: dict[str, int]) -> float:
