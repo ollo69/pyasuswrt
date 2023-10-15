@@ -536,9 +536,9 @@ class AsusWrtHttp:
         """
         Return uptime of the router
 
-        Format: {'last_boot': 'Thu, 22 Jul 2021 14:32:38 +0200', 'uptime': '375001'}
+        Format: {'last_boot': '2023-10-14T17:24:47+00:00', 'uptime': '375001'}
 
-        :returns: JSON with last boot time as datetime and uptime in seconds
+        :returns: JSON with last boot time as utc datetime in iso format and uptime in seconds
         """
         r = await self.__send_req(f"{_CMD_UPTIME}()")
         time = r.partition(":")[2].partition("(")[0]
@@ -554,7 +554,7 @@ class AsusWrtHttp:
             )
             self._last_boot_str = time
 
-        return {"last_boot": self._last_boot, "uptime": up_val}
+        return {"last_boot": self._last_boot.isoformat(), "uptime": up_val}
 
     async def async_get_memory_usage(self):
         """
