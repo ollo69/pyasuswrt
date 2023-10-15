@@ -536,7 +536,7 @@ class AsusWrtHttp:
         """
         Return uptime of the router
 
-        Format: {'last_boot': '2023-10-14T17:24:47+00:00', 'uptime': '375001'}
+        Format: {'last_boot': '2023-10-14T17:24:00+00:00', 'uptime': '375001'}
 
         :returns: JSON with last boot time as utc datetime in iso format and uptime in seconds
         """
@@ -550,7 +550,7 @@ class AsusWrtHttp:
 
         if self._last_boot_str is None or time != self._last_boot_str:
             self._last_boot = (datetime.now(UTC) - timedelta(seconds=up_val)).replace(
-                microsecond=0
+                second=0, microsecond=0
             )
             self._last_boot_str = time
 
