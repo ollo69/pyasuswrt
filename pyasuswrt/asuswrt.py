@@ -6,7 +6,7 @@ import asyncio
 import base64
 from collections import namedtuple
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
 import math
 from typing import Any
@@ -97,11 +97,12 @@ _NVRAM_INFO = [
 
 _CACHE_SPECIFIC_URI = "specific_uri"
 
-DEFAULT_TIMEOUT = 10
+DEFAULT_TIMEOUT = 5
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 8443
 FW_CHECK_INTERVAL = 7200  # seconds, means 2 hour
 
+UTC = timezone.utc
 
 Device = namedtuple("Device", ["mac", "ip", "name", "node", "is_wl"])
 
@@ -229,9 +230,12 @@ class AsusWrtHttp:
 
         self._mac: str | None = None
         self._model: str | None = None
+        self._last_boot: datetime | None = None
+        self._last_boot_str: str | None = None
         self._firmware: AsusWrtFirmware | None = None
         self._last_fw_check = datetime.utcnow()
-        self._mesh_nodes = None
+        self._mesh_nodes: dict[str, str] | None = None
+        self._mesh_last_refresh = datetime.utcnow()
 
         # Transfer byte variable
         self._latest_byte_data = None
@@ -382,6 +386,11 @@ class AsusWrtHttp:
         return self._model
 
     @property
+    def last_boot(self) -> datetime | None:
+        """Return the last boot date and time."""
+        return self._last_boot
+
+    @property
     def firmware(self) -> str | None:
         """Return the device firmware."""
         if self._firmware:
@@ -451,6 +460,11 @@ class AsusWrtHttp:
                 _LOGGER.debug("Failed to retrieve device model")
             else:
                 self._model = result.get(_PROP_MODEL)
+        # last boot
+        try:
+            await self.async_get_uptime()
+        except AsusWrtError:
+            _LOGGER.debug("Failed to retrieve last boot info")
         # firmware
         try:
             await self.async_get_cur_fw()
@@ -522,14 +536,25 @@ class AsusWrtHttp:
         """
         Return uptime of the router
 
-        Format: {'since': 'Thu, 22 Jul 2021 14:32:38 +0200', 'uptime': '375001'}
+        Format: {'last_boot': 'Thu, 22 Jul 2021 14:32:38 +0200', 'uptime': '375001'}
 
-        :returns: JSON with last boot time and uptime in seconds
+        :returns: JSON with last boot time as datetime and uptime in seconds
         """
         r = await self.__send_req(f"{_CMD_UPTIME}()")
         time = r.partition(":")[2].partition("(")[0]
-        up = int(r.partition("(")[2].partition(" ")[0])
-        return {"uptime": up, "time": time}
+        up = r.partition("(")[2].partition(" ")[0]
+        try:
+            up_val = int(up)
+        except ValueError as exc:
+            raise AsusWrtValueError(f"Invalid UpTime value: {r}") from exc
+
+        if self._last_boot_str is None or time != self._last_boot_str:
+            self._last_boot = (datetime.now(UTC) - timedelta(seconds=up_val)).replace(
+                microsecond=0
+            )
+            self._last_boot_str = time
+
+        return {"last_boot": self._last_boot, "uptime": up_val}
 
     async def async_get_memory_usage(self):
         """
@@ -859,6 +884,7 @@ class AsusWrtHttp:
                 )
 
         self._mesh_nodes = mesh_nodes
+        self._mesh_last_refresh = datetime.utcnow()
         result = {}
         for dev in dev_list:
             node_ip = mesh_nodes.get(dev.node) if dev.node else None
@@ -879,7 +905,8 @@ class AsusWrtHttp:
         Format: {"AC:84:C6:6C:A7:C0": "x.x.x.x"}, ...}
         :return: JSON dict with mac as key and ip address as value
         """
-        if self._mesh_nodes is None:
+        last_refresh = (datetime.utcnow() - self._mesh_last_refresh).total_seconds()
+        if self._mesh_nodes is None or last_refresh > 60:
             await self.async_get_connected_devices()
 
         return self._mesh_nodes
