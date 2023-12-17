@@ -59,3 +59,7 @@ class AsusWrtLoginError(AsusWrtError):
 
 class AsusWrtValueError(AsusWrtError, ValueError):
     """Error invalid value received."""
+
+
+class AsusWrtNotAvailableInfoError(AsusWrtError):
+    """Error information not available."""

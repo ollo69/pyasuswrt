@@ -19,6 +19,7 @@ from .exceptions import (
     AsusWrtConnectionTimeoutError,
     AsusWrtError,
     AsusWrtLoginError,
+    AsusWrtNotAvailableInfoError,
     AsusWrtValueError,
 )
 from .helpers import (
@@ -249,6 +250,9 @@ class AsusWrtHttp:
         # CPU usage variable
         self._available_cpu = None
         self._latest_cpu_data = None
+
+        # SYS Info page supported
+        self._sysinfo_support = True
 
     def __url(self, path):
         """Return the url to a specific path."""
@@ -546,7 +550,7 @@ class AsusWrtHttp:
         try:
             up_val = int(up)
         except ValueError as exc:
-            raise AsusWrtValueError(f"Invalid UpTime value: {r}") from exc
+            raise AsusWrtValueError(message=f"Invalid UpTime value: {r}") from exc
 
         if self._last_boot_str is None or time != self._last_boot_str:
             self._last_boot = (datetime.now(UTC) - timedelta(seconds=up_val)).replace(
@@ -632,9 +636,19 @@ class AsusWrtHttp:
 
         :returns: JSON with Sysinfo statistics
         """
+        if not self._sysinfo_support:
+            return None
         if result := self._cache.get_key(_CACHE_SPECIFIC_URI, _ASUSWRT_SYSINFO_PATH):
             return result
-        s = await self.__post(path=_ASUSWRT_SYSINFO_PATH)
+
+        try:
+            s = await self.__post(path=_ASUSWRT_SYSINFO_PATH)
+        except AsusWrtClientResponseError as exc:
+            if exc.status == 404:
+                self._sysinfo_support = False
+                return None
+            raise
+
         result = _parse_sysinfo(s)
         self._cache.set_key(_CACHE_SPECIFIC_URI, _ASUSWRT_SYSINFO_PATH, result)
         return result
@@ -648,9 +662,13 @@ class AsusWrtHttp:
         :returns: JSON with LoadAvg statistics
         """
 
-        sys_info = await self._async_get_sysinfo()
+        if (sys_info := await self._async_get_sysinfo()) is None:
+            raise AsusWrtNotAvailableInfoError(
+                message="Loadavg info not available for this device/firmware"
+            )
         if "cpu_stats_arr" not in sys_info:
-            raise AsusWrtValueError("Loadavg info not available")
+            raise AsusWrtValueError(message="Loadavg info not available")
+
         load_avg = sys_info["cpu_stats_arr"]
         result = {}
         for key, val in load_avg.items():
