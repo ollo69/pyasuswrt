@@ -1,5 +1,5 @@
 # Actions requirements
-aiohttp~=3.7.4
+aiohttp>=3.7.4
 pre-commit==3.0.0
 flake8==6.0.0
 isort==5.12.0
